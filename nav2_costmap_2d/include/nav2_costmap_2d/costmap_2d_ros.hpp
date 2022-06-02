@@ -294,6 +294,14 @@ public:
    */
   bool getUseRadius() {return use_radius_;}
 
+  /**
+   * @brief  Get the costmap's robot_radius_ parameter, corresponding to
+   * raidus of the robot footprint when it is defined as as circle
+   * (i.e. when use_radius_ == true).
+   * @return  robot_radius_
+   */
+  double getRobotRadius() {return robot_radius_;}
+
 protected:
   rclcpp::Node::SharedPtr client_node_;
 
@@ -321,7 +329,7 @@ protected:
   bool stop_updates_{false};
   bool initialized_{false};
   bool stopped_{true};
-  std::thread * map_update_thread_{nullptr};  ///< @brief A thread for updating the map
+  std::unique_ptr<std::thread> map_update_thread_;  ///< @brief A thread for updating the map
   rclcpp::Time last_publish_{0, 0, RCL_ROS_TIME};
   rclcpp::Duration publish_cycle_{1, 0};
   pluginlib::ClassLoader<Layer> plugin_loader_{"nav2_costmap_2d", "nav2_costmap_2d::Layer"};
