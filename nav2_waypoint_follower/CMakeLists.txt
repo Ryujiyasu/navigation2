@@ -24,6 +24,7 @@ find_package(nav2_core REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(robot_localization REQUIRED)
 find_package(geographic_msgs REQUIRED)
+find_package(m2_msgs REQUIRED)
 
 nav2_package()
 
@@ -58,6 +59,7 @@ set(dependencies
   cv_bridge
   OpenCV
   robot_localization
+  m2_msgs
 )
 
 ament_target_dependencies(${executable_name}

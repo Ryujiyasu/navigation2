@@ -41,6 +41,10 @@
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/transform_listener.h"
 
+#include "m2_msgs/msg/goal_poses_with_action.hpp"
+#include "m2_msgs/action/follow_waypoints_with_action.hpp"
+
+
 namespace nav2_waypoint_follower
 {
 
@@ -68,8 +72,17 @@ class WaypointFollower : public nav2_util::LifecycleNode
 public:
   using ActionT = nav2_msgs::action::FollowWaypoints;
   using ClientT = nav2_msgs::action::NavigateToPose;
+
   using ActionServer = nav2_util::SimpleActionServer<ActionT>;
   using ActionClient = rclcpp_action::Client<ClientT>;
+
+
+  using ActionTWithAction = m2_msgs::action::FollowWaypointsWithAction;
+  using ActionServerWithAction = nav2_util::SimpleActionServer<ActionTWithAction>;
+
+
+
+
 
   // Shorten the types for GPS waypoint following
   using ActionTGPS = nav2_msgs::action::FollowGPSWaypoints;
@@ -140,6 +153,10 @@ protected:
    */
   void followWaypointsCallback();
 
+
+  void followWaypointsWithActionCallback();  // ← これを追加
+
+
   /**
    * @brief send robot through each of GPS
    *        point , which are converted to map frame first then using a client to
@@ -199,6 +216,14 @@ protected:
 
   // Our action server
   std::unique_ptr<ActionServer> xyz_action_server_;
+
+
+  std::unique_ptr<ActionServerWithAction> xyz_action_with_action_server_;
+
+
+
+
+
   ActionClient::SharedPtr nav_to_pose_client_;
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::executors::SingleThreadedExecutor callback_group_executor_;
@@ -208,6 +233,14 @@ protected:
   std::unique_ptr<ActionServerGPS> gps_action_server_;
   std::unique_ptr<nav2_util::ServiceClient<robot_localization::srv::FromLL,
     std::shared_ptr<nav2_util::LifecycleNode>>> from_ll_to_map_client_;
+
+
+  rclcpp::Subscription<m2_msgs::msg::GoalPosesWithAction>::SharedPtr goal_sub_;
+
+  void onGoalPosesReceived(
+    const m2_msgs::msg::GoalPosesWithAction::SharedPtr msg);
+
+  m2_msgs::msg::GoalPosesWithAction received_goals_; 
 
   bool stop_on_failure_;
   int loop_rate_;

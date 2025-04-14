@@ -47,7 +47,35 @@ WaypointFollower::WaypointFollower(const rclcpp::NodeOptions & options)
   nav2_util::declare_parameter_if_not_declared(
     this, std::string("wait_at_waypoint.plugin"),
     rclcpp::ParameterValue(std::string("nav2_waypoint_follower::WaitAtWaypoint")));
+
+
+  // goal_sub_ = node_->create_subscription<m2_msgs::msg::GoalPosesWithAction>(
+  //   "/goal_poses_with_action", 10,
+  //   std::bind(&WaypointFollower::onGoalPosesReceived, this, std::placeholders::_1));
 }
+
+void WaypointFollower::onGoalPosesReceived(
+  const m2_msgs::msg::GoalPosesWithAction::SharedPtr msg)
+{
+  // RCLCPP_INFO(node_->get_logger(), "📥 Received %zu goal poses", msg->goals.size());
+
+  received_goals_ = *msg;
+
+  // // Nav2へ渡す形式に変換
+  // nav2_msgs::action::NavigateThroughPoses::Goal nav_goal;
+  // for (const auto &g : msg->goals) {
+  //   nav_goal.poses.push_back(g.pose);
+  // }
+
+  // // 送信
+  // auto send_goal_options = rclcpp_action::Client<nav2_msgs::action::NavigateThroughPoses>::SendGoalOptions();
+  // send_goal_options.result_callback = std::bind(&WaypointFollower::onNav2Finished, this, std::placeholders::_1);
+  // client_->async_send_goal(nav_goal, send_goal_options);
+
+  // current_idx_ = 0;
+}
+
+
 
 WaypointFollower::~WaypointFollower()
 {
@@ -91,6 +119,17 @@ WaypointFollower::on_configure(const rclcpp_lifecycle::State & state)
       &WaypointFollower::followWaypointsCallback,
       this), nullptr, std::chrono::milliseconds(
       500), false, server_options);
+
+  xyz_action_with_action_server_ = std::make_unique<ActionServerWithAction>(
+      get_node_base_interface(),
+      get_node_clock_interface(),
+      get_node_logging_interface(),
+      get_node_waitables_interface(),
+      "follow_waypoints_with_action", std::bind(
+        &WaypointFollower::followWaypointsWithActionCallback,
+        this), nullptr, std::chrono::milliseconds(
+        500), false, server_options);
+
 
   from_ll_to_map_client_ = std::make_unique<
     nav2_util::ServiceClient<robot_localization::srv::FromLL,
@@ -136,6 +175,8 @@ WaypointFollower::on_activate(const rclcpp_lifecycle::State & /*state*/)
 
   xyz_action_server_->activate();
   gps_action_server_->activate();
+  RCLCPP_ERROR(get_logger(), "xyz_action_with_action_server_ activate");
+  xyz_action_with_action_server_->activate();
 
   auto node = shared_from_this();
   // Add callback for dynamic parameters
@@ -206,6 +247,9 @@ std::vector<geometry_msgs::msg::PoseStamped> WaypointFollower::getLatestGoalPose
   }
   return poses;
 }
+
+
+
 
 template<typename T, typename V, typename Z>
 void WaypointFollower::followWaypointsHandler(
@@ -384,6 +428,7 @@ void WaypointFollower::followWaypointsHandler(
 
 void WaypointFollower::followWaypointsCallback()
 {
+  RCLCPP_INFO(get_logger(), "followWaypointsCallback called");
   auto feedback = std::make_shared<ActionT::Feedback>();
   auto result = std::make_shared<ActionT::Result>();
 
@@ -393,6 +438,127 @@ void WaypointFollower::followWaypointsCallback()
     xyz_action_server_,
     feedback, result);
 }
+
+void WaypointFollower::followWaypointsWithActionCallback()
+{
+  RCLCPP_INFO(get_logger(), "followWaypointsWithActionCallback called");
+
+  auto goal = xyz_action_with_action_server_->get_current_goal();
+  auto feedback = std::make_shared<ActionTWithAction::Feedback>();
+  auto result = std::make_shared<ActionTWithAction::Result>();
+
+  if (!goal || goal->goals.empty()) {
+    RCLCPP_ERROR(get_logger(), "Goal is null or empty");
+    xyz_action_with_action_server_->terminate_current(result);
+    return;
+  }
+
+  rclcpp::WallRate r(loop_rate_);
+  size_t goal_index = 0;
+  bool new_goal = true;
+
+  while (rclcpp::ok()) {
+    if (xyz_action_with_action_server_->is_cancel_requested()) {
+      auto cancel_future = nav_to_pose_client_->async_cancel_all_goals();
+      callback_group_executor_.spin_until_future_complete(cancel_future);
+      callback_group_executor_.spin_some();
+      xyz_action_with_action_server_->terminate_all();
+      return;
+    }
+
+    if (xyz_action_with_action_server_->is_preempt_requested()) {
+      RCLCPP_INFO(get_logger(), "Preempting the goal pose.");
+      goal = xyz_action_with_action_server_->accept_pending_goal();
+      if (!goal || goal->goals.empty()) {
+        RCLCPP_ERROR(get_logger(), "Preempted goal is null or empty");
+        xyz_action_with_action_server_->terminate_current(result);
+        return;
+      }
+      goal_index = 0;
+      new_goal = true;
+    }
+
+    if (new_goal) {
+      new_goal = false;
+      const auto & wp = goal->goals[goal_index];
+      RCLCPP_INFO(get_logger(), "Sending goal %lu with action '%s'", goal_index, wp.action.c_str());
+
+      ClientT::Goal client_goal;
+      client_goal.pose = wp.pose;
+      client_goal.pose.header.stamp = this->now();
+
+      auto send_goal_options = rclcpp_action::Client<ClientT>::SendGoalOptions();
+      send_goal_options.result_callback = std::bind(
+        &WaypointFollower::resultCallback, this,
+        std::placeholders::_1);
+      send_goal_options.goal_response_callback = std::bind(
+        &WaypointFollower::goalResponseCallback,
+        this, std::placeholders::_1);
+
+      future_goal_handle_ =
+        nav_to_pose_client_->async_send_goal(client_goal, send_goal_options);
+      current_goal_status_.status = ActionStatus::PROCESSING;
+    }
+
+    feedback->current_index = goal_index;
+    xyz_action_with_action_server_->publish_feedback(feedback);
+
+    if (
+      current_goal_status_.status == ActionStatus::FAILED ||
+      current_goal_status_.status == ActionStatus::UNKNOWN)
+    {
+      ActionTWithAction::Result::GoalResult error_result;
+      error_result.index = goal_index;
+      error_result.pose = goal->goals[goal_index].pose;
+      error_result.error_code = current_goal_status_.error_code;
+      error_result.message = "Navigation failed";
+      result->results.push_back(error_result);
+
+      if (stop_on_failure_) {
+        RCLCPP_WARN(get_logger(), "Stopping due to failure at goal %lu", goal_index);
+        xyz_action_with_action_server_->terminate_current(result);
+        return;
+      } else {
+        RCLCPP_INFO(get_logger(), "Continuing despite failure at goal %lu", goal_index);
+      }
+    } else if (current_goal_status_.status == ActionStatus::SUCCEEDED) {
+      RCLCPP_INFO(get_logger(), "Succeeded goal %lu", goal_index);
+      bool task_ok = waypoint_task_executor_->processAtWaypoint(
+        goal->goals[goal_index].pose, goal_index);
+
+      if (!task_ok) {
+        ActionTWithAction::Result::GoalResult error_result;
+        error_result.index = goal_index;
+        error_result.pose = goal->goals[goal_index].pose;
+        error_result.error_code = ActionTWithAction::Result::TASK_EXECUTOR_FAILED;
+        error_result.message = "Task execution failed";
+        result->results.push_back(error_result);
+
+        if (stop_on_failure_) {
+          RCLCPP_WARN(get_logger(), "Stopping due to task failure at goal %lu", goal_index);
+          xyz_action_with_action_server_->terminate_current(result);
+          return;
+        }
+      }
+    }
+
+    if (current_goal_status_.status != ActionStatus::PROCESSING) {
+      goal_index++;
+      new_goal = true;
+
+      if (goal_index >= goal->goals.size()) {
+        RCLCPP_INFO(get_logger(), "Completed all %lu waypoints.", goal->goals.size());
+        xyz_action_with_action_server_->succeeded_current(result);
+        current_goal_status_.error_code = 0;
+        return;
+      }
+    }
+
+    callback_group_executor_.spin_some();
+    r.sleep();
+  }
+}
+
 
 void WaypointFollower::followGPSWaypointsCallback()
 {
