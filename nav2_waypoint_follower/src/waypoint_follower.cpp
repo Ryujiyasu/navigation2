@@ -242,6 +242,12 @@ std::vector<geometry_msgs::msg::PoseStamped> WaypointFollower::getLatestGoalPose
   // GPSでなければ
   if constexpr (std::is_same<T, std::unique_ptr<ActionServer>>::value) {
     poses = current_goal->poses;
+  } else if constexpr (
+    std::is_same<T, std::unique_ptr<ActionServerWithAction>>::value
+  ){
+    
+    poses = current_goal->poses;
+
   } else {
     // GPSの場合
     poses = convertGPSPosesToMapPoses(
@@ -259,20 +265,34 @@ void WaypointFollower::followWaypointsHandler(
   const V & feedback,
   const Z & result)
 {
+  
   // goalを取得
   auto goal = action_server->get_current_goal();
 
   // 現在のLoop回数
   unsigned int current_loop_no = 0;
+
+  RCLCPP_INFO(
+    get_logger(), "現在のループ回数: %i",
+    static_cast<int>(current_loop_no));
   
   // loop回数を取得
   auto no_of_loops = goal->number_of_loops;
+
+  RCLCPP_INFO(
+    get_logger(), "ループ回数: %i",
+    static_cast<int>(no_of_loops));
 
 
   std::vector<geometry_msgs::msg::PoseStamped> poses;
   
   // WPの取得
   poses = getLatestGoalPoses<T>(action_server);
+
+
+  RCLCPP_INFO(
+    get_logger(), "受け取ったWPの数: %i",
+    static_cast<int>(poses.size()));
 
   if (!action_server || !action_server->is_server_active()) {
     RCLCPP_DEBUG(get_logger(), "Action サーバーはアクティブではありません");
@@ -456,9 +476,9 @@ void WaypointFollower::followWaypointsWithActionCallback()
   auto result = std::make_shared<ActionTWithAction::Result>();
 
 
-  followWaypointsHandler<std::unique_ptr<ActionServerGPS>,
-    ActionTGPS::Feedback::SharedPtr,
-    ActionTGPS::Result::SharedPtr>(
+  followWaypointsHandler<std::unique_ptr<ActionServerWithAction>,
+    ActionTWithAction::Feedback::SharedPtr,
+    ActionTWithAction::Result::SharedPtr>(
     xyz_action_with_action_server_,
     feedback, result);
   
