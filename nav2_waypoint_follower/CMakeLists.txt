@@ -25,6 +25,7 @@ find_package(pluginlib REQUIRED)
 find_package(robot_localization REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(m2_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 nav2_package()
 
@@ -60,6 +61,7 @@ set(dependencies
   OpenCV
   robot_localization
   m2_msgs
+  std_srvs
 )
 
 ament_target_dependencies(${executable_name}

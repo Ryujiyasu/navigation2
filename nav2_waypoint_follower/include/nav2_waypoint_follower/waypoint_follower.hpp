@@ -45,6 +45,9 @@
 #include "m2_msgs/action/follow_waypoints_with_action.hpp"
 
 
+#include "std_srvs/srv/set_bool.hpp"
+
+
 namespace nav2_waypoint_follower
 {
 

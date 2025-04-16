@@ -268,7 +268,10 @@ void WaypointFollower::followWaypointsHandler(
   
   // goalを取得
   auto goal = action_server->get_current_goal();
-
+  if constexpr (std::is_same<T, std::unique_ptr<ActionServerWithAction>>::value
+    ){
+      goal_pose_with_actions = goal->actions;
+    }
   // 現在のLoop回数
   unsigned int current_loop_no = 0;
 
@@ -410,8 +413,56 @@ void WaypointFollower::followWaypointsHandler(
 
       if constexpr (std::is_same<T, std::unique_ptr<ActionServerWithAction>>::value
       ){
+        RCLCPP_INFO(this->get_logger(), "アクションを実行します");
+        RCLCPP_INFO(this->get_logger(), "goal %u", goal_index);
+
+        //goal_pose_with_actions の中身を確認
         auto current_action = goal_pose_with_actions[goal_index];
         RCLCPP_INFO(this->get_logger(), "goal %u: action = %s", goal_index, current_action.action.c_str());
+
+        if (current_action.action == "Change Direction") {
+          // サービスクライアント生成
+          auto client = this->create_client<std_srvs::srv::SetBool>("set_front_move");
+      
+          rclcpp::Time start_time = this->now();
+          rclcpp::Duration timeout = rclcpp::Duration::from_seconds(2.0);
+
+          while (!client->wait_for_service(std::chrono::milliseconds(100))) {
+            if ((this->now() - start_time) > timeout) {
+              RCLCPP_ERROR(this->get_logger(), "Timeout waiting for /set_front_move");
+              is_task_executed = false;
+              break;
+            }
+            callback_group_executor_.spin_some();
+          }
+
+          if (client->service_is_ready()) {
+            auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+            request->data = false;
+
+            auto future = client->async_send_request(request);
+            start_time = this->now();
+
+            while ((this->now() - start_time) < timeout) {
+              callback_group_executor_.spin_some();
+              if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
+                auto response = future.get();
+                RCLCPP_INFO(this->get_logger(), "Service response: %s", response->message.c_str());
+                is_task_executed = response->success;
+                break;
+              }
+            }
+
+            if (!is_task_executed) {
+              RCLCPP_ERROR(this->get_logger(), "Timed out waiting for response from /set_front_move");
+            }
+          }
+        } else {
+          // 未知のアクション（今後追加）
+          RCLCPP_WARN(this->get_logger(), "未対応のアクション: %s", current_action.action.c_str());
+          is_task_executed = false;
+        }
+
 
         
     
@@ -419,9 +470,7 @@ void WaypointFollower::followWaypointsHandler(
         is_task_executed = waypoint_task_executor_->processAtWaypoint(poses[goal_index], goal_index);
       }
 
-      
-      
-      
+
       
         RCLCPP_INFO(
         get_logger(), "WP %i タスクを実行しました: %s",
