@@ -335,6 +335,13 @@ void WaypointFollower::followWaypointsHandler(
       RCLCPP_INFO(get_logger(), "新しいゴールが要求されました");
       goal = action_server->accept_pending_goal();
       poses = getLatestGoalPoses<T>(action_server);
+      if constexpr (std::is_same<T, std::unique_ptr<ActionServerWithAction>>::value
+      ){
+        goal_pose_with_actions = goal->actions;
+      }
+
+
+    
       if (poses.empty()) {
         RCLCPP_ERROR(
           get_logger(),
@@ -397,11 +404,28 @@ void WaypointFollower::followWaypointsHandler(
       // 成功した場合
       RCLCPP_INFO(
         get_logger(), "成功したWP %i", goal_index);
-      bool is_task_executed = waypoint_task_executor_->processAtWaypoint(
-        poses[goal_index], goal_index);
-      RCLCPP_INFO(
-        get_logger(), "Task execution at waypoint %i %s", goal_index,
-        is_task_executed ? "succeeded" : "failed!");
+
+      // タスクを実行する
+      bool is_task_executed = false;
+
+      if constexpr (std::is_same<T, std::unique_ptr<ActionServerWithAction>>::value
+      ){
+        auto current_action = goal_pose_with_actions[goal_index];
+        RCLCPP_INFO(this->get_logger(), "goal %u: action = %s", goal_index, current_action.action.c_str());
+
+        
+    
+      } else {
+        is_task_executed = waypoint_task_executor_->processAtWaypoint(poses[goal_index], goal_index);
+      }
+
+      
+      
+      
+      
+        RCLCPP_INFO(
+        get_logger(), "WP %i タスクを実行しました: %s",
+        goal_index, is_task_executed ? "succeeded" : "failed!");
 
       if (!is_task_executed) {
         nav2_msgs::msg::MissedWaypoint missedWaypoint;

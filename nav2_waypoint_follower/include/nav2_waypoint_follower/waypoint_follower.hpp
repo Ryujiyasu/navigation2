@@ -257,6 +257,8 @@ protected:
   waypoint_task_executor_;
   std::string waypoint_task_executor_id_;
   std::string waypoint_task_executor_type_;
+
+  std::vector<m2_msgs::msg::GoalPoseWithAction> goal_pose_with_actions;
 };
 
 }  // namespace nav2_waypoint_follower
